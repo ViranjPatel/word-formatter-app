@@ -24,7 +24,7 @@
                 {% endif %}
             {% endwith %}
             
-            <form action="{{ url_for('process_documents') }}" method="post" enctype="multipart/form-data" class="upload-form">
+            <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="upload-form">
                 <div class="file-group">
                     <label for="template_file">📋 Template Document (.docx)</label>
                     <p class="help-text">Select the document with the formatting you want to copy</p>
