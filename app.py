@@ -4,6 +4,10 @@ from werkzeug.utils import secure_filename
 from document_formatter import DocumentFormatter
 import tempfile
 from datetime import datetime
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.WARNING)
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this'
@@ -25,8 +29,10 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process():
+    temp_files = []  # Track temporary files for cleanup
+    
     try:
-        # Check if files were uploaded
+        # Validate file uploads
         if 'template_file' not in request.files or 'target_file' not in request.files:
             flash('Please select both template and target files')
             return redirect(url_for('index'))
@@ -34,43 +40,82 @@ def process():
         template_file = request.files['template_file']
         target_file = request.files['target_file']
         
-        # Check if files are selected
-        if template_file.filename == '' or target_file.filename == '':
+        # Validate file selection
+        if not template_file.filename or not target_file.filename:
             flash('Please select both files')
             return redirect(url_for('index'))
         
-        # Check file extensions
+        # Validate file extensions
         if not (allowed_file(template_file.filename) and allowed_file(target_file.filename)):
             flash('Only .docx files are allowed')
             return redirect(url_for('index'))
         
-        # Create temporary files
+        # Create temporary files with context management
         with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_template:
             template_file.save(temp_template.name)
             template_path = temp_template.name
+            temp_files.append(template_path)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_target:
             target_file.save(temp_target.name)
             target_path = temp_target.name
+            temp_files.append(target_path)
         
-        # Process the documents
-        formatter = DocumentFormatter()
+        # Process documents with optimized formatter
+        formatter = DocumentFormatter(debug=False)  # Disable debug for production
         output_path = formatter.apply_formatting(template_path, target_path)
+        temp_files.append(output_path)
         
-        # Clean up temporary files
-        os.unlink(template_path)
-        os.unlink(target_path)
-        
-        # Generate output filename
+        # Generate descriptive output filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f'formatted_document_{timestamp}.docx'
+        base_name = os.path.splitext(target_file.filename)[0]
+        output_filename = f'{base_name}_formatted_{timestamp}.docx'
         
-        # Send file and clean up
-        return send_file(output_path, as_attachment=True, download_name=output_filename)
+        # Send file with automatic cleanup
+        def cleanup_files():
+            for filepath in temp_files:
+                try:
+                    if os.path.exists(filepath):
+                        os.unlink(filepath)
+                except OSError:
+                    pass  # Ignore cleanup errors
+        
+        # Register cleanup to happen after response
+        @app.after_request
+        def cleanup_after_response(response):
+            cleanup_files()
+            return response
+        
+        return send_file(
+            output_path, 
+            as_attachment=True, 
+            download_name=output_filename,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
         
     except Exception as e:
-        flash(f'Error processing documents: {str(e)}')
+        # Clean up temp files on error
+        for filepath in temp_files:
+            try:
+                if os.path.exists(filepath):
+                    os.unlink(filepath)
+            except OSError:
+                pass
+        
+        error_msg = f'Error processing documents: {str(e)}'
+        app.logger.error(error_msg)
+        flash(error_msg)
         return redirect(url_for('index'))
+
+@app.errorhandler(413)
+def too_large(e):
+    flash('File is too large. Maximum size is 16MB.')
+    return redirect(url_for('index'))
+
+@app.errorhandler(500)
+def internal_error(e):
+    flash('An internal error occurred. Please try again.')
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
