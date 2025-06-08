@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Document Formatter</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📄 Word Document Formatter</h1>
+            <p>Apply formatting from one Word document to another</p>
+        </header>
+        
+        <main>
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                    <div class="messages">
+                        {% for message in messages %}
+                            <div class="alert">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+            
+            <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="upload-form">
+                <div class="file-group">
+                    <label for="template_file">📋 Template Document (.docx)</label>
+                    <p class="help-text">Select the document with the formatting you want to copy</p>
+                    <input type="file" id="template_file" name="template_file" accept=".docx" required>
+                </div>
+                
+                <div class="file-group">
+                    <label for="target_file">📝 Target Document (.docx)</label>
+                    <p class="help-text">Select the document you want to apply formatting to</p>
+                    <input type="file" id="target_file" name="target_file" accept=".docx" required>
+                </div>
+                
+                <button type="submit" class="process-btn">✨ Apply Formatting</button>
+            </form>
+            
+            <div class="info-section">
+                <h3>How it works:</h3>
+                <ol>
+                    <li>Upload a <strong>template document</strong> that has the formatting you like</li>
+                    <li>Upload a <strong>target document</strong> that you want to format</li>
+                    <li>Click "Apply Formatting" to process the documents</li>
+                    <li>Download your newly formatted document!</li>
+                </ol>
+                
+                <div class="note">
+                    <strong>Note:</strong> This tool copies font styles, sizes, colors, and basic formatting. 
+                    Complex layouts and advanced formatting may not be preserved.
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>Built with Python, Flask, and python-docx</p>
+        </footer>
+    </div>
+</body>
+</html>
