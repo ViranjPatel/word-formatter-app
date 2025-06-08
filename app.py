@@ -24,7 +24,7 @@ def index():
     return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
-def process_documents():
+def process():
     try:
         # Check if files were uploaded
         if 'template_file' not in request.files or 'target_file' not in request.files:
