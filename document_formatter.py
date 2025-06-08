@@ -1,7 +1,6 @@
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.style import WD_STYLE_TYPE
 import tempfile
 import os
 
@@ -19,28 +18,36 @@ class DocumentFormatter:
                 style_info = {
                     'font_name': None,
                     'font_size': None,
-                    'bold': False,
-                    'italic': False,
-                    'underline': False,
+                    'bold': None,
+                    'italic': None,
+                    'underline': None,
                     'color': None,
                     'alignment': None
                 }
-                
-                # Get run formatting (font properties)
+
                 if paragraph.runs:
-                    first_run = paragraph.runs[0]
-                    if first_run.font.name:
-                        style_info['font_name'] = first_run.font.name
-                    if first_run.font.size:
-                        style_info['font_size'] = first_run.font.size
-                    if first_run.font.bold:
-                        style_info['bold'] = first_run.font.bold
-                    if first_run.font.italic:
-                        style_info['italic'] = first_run.font.italic
-                    if first_run.font.underline:
-                        style_info['underline'] = first_run.font.underline
-                    if first_run.font.color.rgb:
-                        style_info['color'] = first_run.font.color.rgb
+                    # Prefer a run that has explicit formatting
+                    best_run = None
+                    for r in paragraph.runs:
+                        if r.font.name or r.font.size or r.bold is not None or r.italic is not None \
+                                or r.underline is not None or (r.font.color and r.font.color.rgb):
+                            best_run = r
+                            break
+                    if not best_run:
+                        best_run = paragraph.runs[0]
+
+                    if best_run.font.name:
+                        style_info['font_name'] = best_run.font.name
+                    if best_run.font.size:
+                        style_info['font_size'] = best_run.font.size
+                    if best_run.bold is not None:
+                        style_info['bold'] = best_run.bold
+                    if best_run.italic is not None:
+                        style_info['italic'] = best_run.italic
+                    if best_run.underline is not None:
+                        style_info['underline'] = best_run.underline
+                    if best_run.font.color.rgb:
+                        style_info['color'] = best_run.font.color.rgb
                 
                 # Get paragraph alignment
                 if paragraph.alignment:
@@ -68,12 +75,12 @@ class DocumentFormatter:
                 run.font.name = style_info['font_name']
             if style_info['font_size']:
                 run.font.size = style_info['font_size']
-            if style_info['bold']:
-                run.font.bold = style_info['bold']
-            if style_info['italic']:
-                run.font.italic = style_info['italic']
-            if style_info['underline']:
-                run.font.underline = style_info['underline']
+            if style_info['bold'] is not None:
+                run.bold = style_info['bold']
+            if style_info['italic'] is not None:
+                run.italic = style_info['italic']
+            if style_info['underline'] is not None:
+                run.underline = style_info['underline']
             if style_info['color']:
                 run.font.color.rgb = style_info['color']
         
