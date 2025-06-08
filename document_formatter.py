@@ -2,7 +2,6 @@ from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
-from docx.styles.style import CharacterStyle, ParagraphStyle
 import tempfile
 import os
 import re
@@ -206,47 +205,50 @@ class DocumentFormatter:
     
     def update_existing_style(self, style, style_info):
         """Update an existing style with template formatting"""
-        # Update font formatting
-        if 'font' in style_info and style.font:
-            font_info = style_info['font']
-            if 'name' in font_info:
-                style.font.name = font_info['name']
-            if 'size' in font_info:
-                style.font.size = font_info['size']
-            if 'bold' in font_info:
-                style.font.bold = font_info['bold']
-            if 'italic' in font_info:
-                style.font.italic = font_info['italic']
-            if 'underline' in font_info:
-                style.font.underline = font_info['underline']
-            if 'color' in font_info:
-                style.font.color.rgb = font_info['color']
-        
-        # Update paragraph formatting if it's a paragraph style
-        if style_info['type'] == 'paragraph' and hasattr(style, 'paragraph_format'):
-            if 'paragraph' in style_info:
-                para_info = style_info['paragraph']
-                pf = style.paragraph_format
-                if 'alignment' in para_info:
-                    pf.alignment = para_info['alignment']
-                if 'space_before' in para_info:
-                    pf.space_before = para_info['space_before']
-                if 'space_after' in para_info:
-                    pf.space_after = para_info['space_after']
-                if 'line_spacing' in para_info:
-                    pf.line_spacing = para_info['line_spacing']
-                if 'first_line_indent' in para_info:
-                    pf.first_line_indent = para_info['first_line_indent']
-                if 'left_indent' in para_info:
-                    pf.left_indent = para_info['left_indent']
-                if 'right_indent' in para_info:
-                    pf.right_indent = para_info['right_indent']
+        try:
+            # Update font formatting
+            if 'font' in style_info and hasattr(style, 'font') and style.font:
+                font_info = style_info['font']
+                if 'name' in font_info:
+                    style.font.name = font_info['name']
+                if 'size' in font_info:
+                    style.font.size = font_info['size']
+                if 'bold' in font_info:
+                    style.font.bold = font_info['bold']
+                if 'italic' in font_info:
+                    style.font.italic = font_info['italic']
+                if 'underline' in font_info:
+                    style.font.underline = font_info['underline']
+                if 'color' in font_info:
+                    style.font.color.rgb = font_info['color']
+            
+            # Update paragraph formatting if it's a paragraph style
+            if style_info['type'] == 'paragraph' and hasattr(style, 'paragraph_format'):
+                if 'paragraph' in style_info:
+                    para_info = style_info['paragraph']
+                    pf = style.paragraph_format
+                    if 'alignment' in para_info:
+                        pf.alignment = para_info['alignment']
+                    if 'space_before' in para_info:
+                        pf.space_before = para_info['space_before']
+                    if 'space_after' in para_info:
+                        pf.space_after = para_info['space_after']
+                    if 'line_spacing' in para_info:
+                        pf.line_spacing = para_info['line_spacing']
+                    if 'first_line_indent' in para_info:
+                        pf.first_line_indent = para_info['first_line_indent']
+                    if 'left_indent' in para_info:
+                        pf.left_indent = para_info['left_indent']
+                    if 'right_indent' in para_info:
+                        pf.right_indent = para_info['right_indent']
+        except Exception as e:
+            print(f"Error updating style: {e}")
     
     def create_paragraph_style(self, doc, style_name, style_info):
         """Create a new paragraph style in the document"""
         try:
             # Skip creating built-in styles that might conflict
-            if style_name in ['Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Title']:
+            if style_name in ['Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'Heading 5', 'Heading 6', 'Title']:
                 return
             
             styles = doc.styles
