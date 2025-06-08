@@ -5,330 +5,315 @@ from docx.enum.style import WD_STYLE_TYPE
 import tempfile
 import os
 import re
-from collections import defaultdict
+from collections import defaultdict, Counter
+from functools import lru_cache
+import logging
+
+# Configure logging for optional debug output
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
 
 class DocumentFormatter:
-    def __init__(self):
+    # Pre-compiled regex patterns for better performance
+    HEADING_PATTERN = re.compile(r'^\d+\.|^[A-Z][^.!?]*$')
+    LIST_PATTERN = re.compile(r'^[•\-\*]|^\d+[.).]')
+    
+    # Content type constants
+    CONTENT_TYPES = {
+        'heading': 'heading',
+        'list_item': 'list_item', 
+        'title': 'title',
+        'quote': 'quote',
+        'body': 'body'
+    }
+    
+    # Built-in styles that shouldn't be recreated
+    BUILTIN_STYLES = frozenset([
+        'Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 
+        'Heading 5', 'Heading 6', 'Title', 'Subtitle', 'Header', 'Footer'
+    ])
+
+    def __init__(self, debug=False):
         self.template_styles = {}
-        self.style_mappings = {}
-        self.content_patterns = {}
+        self.style_content_map = {}
+        self.content_style_cache = {}
+        self.debug = debug
+        if debug:
+            logger.setLevel(logging.INFO)
     
     def extract_styles_from_template(self, template_path):
-        """Extract all paragraph and character styles from the template document"""
+        """Extract styles and analyze content patterns efficiently"""
         doc = Document(template_path)
         
-        # Extract built-in and custom styles
+        # Single pass through styles for extraction
+        paragraph_styles = {}
+        character_styles = {}
+        
         for style in doc.styles:
-            if style.type == WD_STYLE_TYPE.PARAGRAPH:
-                self.extract_paragraph_style(style)
-            elif style.type == WD_STYLE_TYPE.CHARACTER:
-                self.extract_character_style(style)
+            style_data = self._extract_style_data(style)
+            if style_data:
+                if style.type == WD_STYLE_TYPE.PARAGRAPH:
+                    paragraph_styles[style.name] = style_data
+                elif style.type == WD_STYLE_TYPE.CHARACTER:
+                    character_styles[style.name] = style_data
         
-        # Analyze content patterns to understand style usage
-        self.analyze_content_patterns(doc)
+        self.template_styles = {**paragraph_styles, **character_styles}
         
-        print(f"Extracted {len(self.template_styles)} styles from template")
-        for style_name in self.template_styles.keys():
-            print(f"  - {style_name}")
+        # Single pass content analysis with batch processing
+        self._analyze_content_usage_batch(doc)
+        
+        if self.debug:
+            logger.info(f"Extracted {len(self.template_styles)} styles")
     
-    def extract_paragraph_style(self, style):
-        """Extract formatting information from a paragraph style"""
-        style_info = {
-            'type': 'paragraph',
-            'name': style.name,
-            'base_style': style.base_style.name if style.base_style else None,
-            'font': {},
-            'paragraph': {},
-            'usage_examples': []
+    def _extract_style_data(self, style):
+        """Efficiently extract style data with minimal attribute access"""
+        style_data = {
+            'type': 'paragraph' if style.type == WD_STYLE_TYPE.PARAGRAPH else 'character',
+            'name': style.name
         }
         
-        # Extract font formatting
-        if style.font:
-            if style.font.name:
-                style_info['font']['name'] = style.font.name
-            if style.font.size:
-                style_info['font']['size'] = style.font.size
-            if style.font.bold is not None:
-                style_info['font']['bold'] = style.font.bold
-            if style.font.italic is not None:
-                style_info['font']['italic'] = style.font.italic
-            if style.font.underline is not None:
-                style_info['font']['underline'] = style.font.underline
-            if style.font.color and style.font.color.rgb:
-                style_info['font']['color'] = style.font.color.rgb
+        # Extract font data efficiently
+        font_data = {}
+        if hasattr(style, 'font') and style.font:
+            font = style.font
+            font_attrs = ['name', 'size', 'bold', 'italic', 'underline']
+            for attr in font_attrs:
+                value = getattr(font, attr, None)
+                if value is not None:
+                    font_data[attr] = value
+            
+            # Handle color separately due to complex access pattern
+            if hasattr(font, 'color') and font.color and hasattr(font.color, 'rgb') and font.color.rgb:
+                font_data['color'] = font.color.rgb
         
-        # Extract paragraph formatting
-        if style.paragraph_format:
+        if font_data:
+            style_data['font'] = font_data
+        
+        # Extract paragraph data efficiently for paragraph styles
+        if style.type == WD_STYLE_TYPE.PARAGRAPH and hasattr(style, 'paragraph_format') and style.paragraph_format:
+            para_data = {}
             pf = style.paragraph_format
-            if pf.alignment is not None:
-                style_info['paragraph']['alignment'] = pf.alignment
-            if pf.space_before is not None:
-                style_info['paragraph']['space_before'] = pf.space_before
-            if pf.space_after is not None:
-                style_info['paragraph']['space_after'] = pf.space_after
-            if pf.line_spacing is not None:
-                style_info['paragraph']['line_spacing'] = pf.line_spacing
-            if pf.first_line_indent is not None:
-                style_info['paragraph']['first_line_indent'] = pf.first_line_indent
-            if pf.left_indent is not None:
-                style_info['paragraph']['left_indent'] = pf.left_indent
-            if pf.right_indent is not None:
-                style_info['paragraph']['right_indent'] = pf.right_indent
+            para_attrs = ['alignment', 'space_before', 'space_after', 'line_spacing', 
+                         'first_line_indent', 'left_indent', 'right_indent']
+            
+            for attr in para_attrs:
+                value = getattr(pf, attr, None)
+                if value is not None:
+                    para_data[attr] = value
+            
+            if para_data:
+                style_data['paragraph'] = para_data
         
-        self.template_styles[style.name] = style_info
+        return style_data if len(style_data) > 2 else None  # Only return if has meaningful data
     
-    def extract_character_style(self, style):
-        """Extract formatting information from a character style"""
-        style_info = {
-            'type': 'character',
-            'name': style.name,
-            'base_style': style.base_style.name if style.base_style else None,
-            'font': {}
-        }
-        
-        # Extract font formatting
-        if style.font:
-            if style.font.name:
-                style_info['font']['name'] = style.font.name
-            if style.font.size:
-                style_info['font']['size'] = style.font.size
-            if style.font.bold is not None:
-                style_info['font']['bold'] = style.font.bold
-            if style.font.italic is not None:
-                style_info['font']['italic'] = style.font.italic
-            if style.font.underline is not None:
-                style_info['font']['underline'] = style.font.underline
-            if style.font.color and style.font.color.rgb:
-                style_info['font']['color'] = style.font.color.rgb
-        
-        self.template_styles[style.name] = style_info
-    
-    def analyze_content_patterns(self, doc):
-        """Analyze how styles are used in the template document"""
+    def _analyze_content_usage_batch(self, doc):
+        """Batch analyze content patterns for optimal performance"""
         style_usage = defaultdict(list)
         
-        for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                style_name = paragraph.style.name
-                text_preview = paragraph.text.strip()[:100]
-                
-                # Categorize content types
-                content_type = self.categorize_content(text_preview)
-                
-                style_usage[style_name].append({
-                    'text': text_preview,
-                    'content_type': content_type,
-                    'length': len(paragraph.text.strip())
-                })
+        # Collect all text content in single pass
+        all_paragraphs = []
+        all_paragraphs.extend(doc.paragraphs)
         
-        # Store usage patterns for each style
-        for style_name, usage_list in style_usage.items():
-            if style_name in self.template_styles:
-                self.template_styles[style_name]['usage_examples'] = usage_list
-                
-                # Determine primary content type for this style
-                content_types = [item['content_type'] for item in usage_list]
-                most_common_type = max(set(content_types), key=content_types.count)
-                self.template_styles[style_name]['primary_content_type'] = most_common_type
-    
-    def categorize_content(self, text):
-        """Categorize text content to help with style matching"""
-        text_lower = text.lower().strip()
-        
-        # Check for headings
-        if re.match(r'^\d+\.', text) or re.match(r'^[A-Z][^.!?]*$', text) and len(text) < 100:
-            return 'heading'
-        
-        # Check for list items
-        if re.match(r'^[•\\-\\*]', text) or re.match(r'^\d+[.).]', text):
-            return 'list_item'
-        
-        # Check for titles (short, all caps or title case)
-        if text.isupper() and len(text) < 50:
-            return 'title'
-        
-        # Check for emphasis or quotes
-        if text.startswith('"') or text.startswith("'"):
-            return 'quote'
-        
-        # Default to body text
-        return 'body'
-    
-    def apply_styles_to_target(self, target_path):
-        """Apply extracted styles to the target document"""
-        target_doc = Document(target_path)
-        
-        # First, create/update styles in target document
-        self.create_styles_in_target(target_doc)
-        
-        # Then apply styles to paragraphs based on content analysis
-        for paragraph in target_doc.paragraphs:
-            if paragraph.text.strip():
-                best_style = self.find_best_style_for_content(paragraph.text.strip())
-                if best_style:
-                    try:
-                        paragraph.style = target_doc.styles[best_style]
-                        print(f"Applied style '{best_style}' to: {paragraph.text[:50]}...")
-                    except KeyError:
-                        print(f"Style '{best_style}' not found in target document")
-        
-        # Apply styles to table content
-        for table in target_doc.tables:
+        # Add table paragraphs
+        for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
-                    for paragraph in cell.paragraphs:
-                        if paragraph.text.strip():
-                            best_style = self.find_best_style_for_content(paragraph.text.strip())
-                            if best_style:
-                                try:
-                                    paragraph.style = target_doc.styles[best_style]
-                                except KeyError:
-                                    pass
+                    all_paragraphs.extend(cell.paragraphs)
+        
+        # Process all paragraphs with batch categorization
+        content_types = []
+        texts = []
+        style_names = []
+        
+        for paragraph in all_paragraphs:
+            text = paragraph.text.strip()
+            if text and len(text) > 2:  # Skip very short text
+                texts.append(text[:100])  # Limit text length for performance
+                style_names.append(paragraph.style.name)
+                content_types.append(self._categorize_content_fast(text))
+        
+        # Build style mappings efficiently
+        for style_name, content_type in zip(style_names, content_types):
+            if style_name in self.template_styles:
+                if style_name not in self.style_content_map:
+                    self.style_content_map[style_name] = []
+                self.style_content_map[style_name].append(content_type)
+        
+        # Determine primary content type for each style
+        for style_name, content_list in self.style_content_map.items():
+            if content_list:
+                primary_type = Counter(content_list).most_common(1)[0][0]
+                self.template_styles[style_name]['primary_content_type'] = primary_type
+    
+    @lru_cache(maxsize=1000)
+    def _categorize_content_fast(self, text):
+        """Fast content categorization with caching and optimized patterns"""
+        text_stripped = text.strip()
+        text_len = len(text_stripped)
+        
+        # Quick length-based filtering
+        if text_len == 0:
+            return self.CONTENT_TYPES['body']
+        
+        # Check for titles (short uppercase)
+        if text_stripped.isupper() and text_len < 50:
+            return self.CONTENT_TYPES['title']
+        
+        # Check for quotes (starts with quote marks)
+        first_char = text_stripped[0]
+        if first_char in '\"\'':
+            return self.CONTENT_TYPES['quote']
+        
+        # Use pre-compiled patterns for better performance
+        if text_len < 100 and self.HEADING_PATTERN.match(text_stripped):
+            return self.CONTENT_TYPES['heading']
+        
+        if self.LIST_PATTERN.match(text_stripped):
+            return self.CONTENT_TYPES['list_item']
+        
+        return self.CONTENT_TYPES['body']
+    
+    def apply_styles_to_target(self, target_path):
+        """Apply styles with optimized batch processing"""
+        target_doc = Document(target_path)
+        
+        # Pre-create style mapping for fast lookup
+        self._prepare_style_mapping()
+        
+        # Batch update existing styles
+        self._batch_update_styles(target_doc)
+        
+        # Batch apply styles to content
+        self._batch_apply_paragraph_styles(target_doc)
         
         return target_doc
     
-    def create_styles_in_target(self, target_doc):
-        """Create or update styles in the target document based on template"""
-        for style_name, style_info in self.template_styles.items():
+    def _prepare_style_mapping(self):
+        """Pre-compute style mappings for O(1) lookup"""
+        content_type_styles = defaultdict(list)
+        
+        for style_name, style_data in self.template_styles.items():
+            content_type = style_data.get('primary_content_type', 'body')
+            content_type_styles[content_type].append(style_name)
+        
+        # Cache the best style for each content type
+        for content_type, style_list in content_type_styles.items():
+            if style_list:
+                self.content_style_cache[content_type] = style_list[0]
+        
+        # Add fallback mappings
+        style_name_lower_map = {name.lower(): name for name in self.template_styles.keys()}
+        
+        for content_type in self.CONTENT_TYPES.values():
+            if content_type not in self.content_style_cache:
+                # Try to find by name pattern
+                for pattern in [content_type, 'heading', 'title', 'normal']:
+                    if pattern in style_name_lower_map:
+                        self.content_style_cache[content_type] = style_name_lower_map[pattern]
+                        break
+        
+        # Ultimate fallback
+        if self.template_styles:
+            fallback_style = next(iter(self.template_styles.keys()))
+            for content_type in self.CONTENT_TYPES.values():
+                if content_type not in self.content_style_cache:
+                    self.content_style_cache[content_type] = fallback_style
+    
+    def _batch_update_styles(self, target_doc):
+        """Efficiently update or create styles in batch"""
+        existing_styles = {style.name for style in target_doc.styles}
+        
+        for style_name, style_data in self.template_styles.items():
             try:
-                # Try to get existing style
-                existing_style = target_doc.styles[style_name]
-                self.update_existing_style(existing_style, style_info)
-                print(f"Updated existing style: {style_name}")
-            except KeyError:
-                # Create new style if it doesn't exist
-                if style_info['type'] == 'paragraph':
-                    self.create_paragraph_style(target_doc, style_name, style_info)
-                elif style_info['type'] == 'character':
-                    self.create_character_style(target_doc, style_name, style_info)
-                print(f"Created new style: {style_name}")
+                if style_name in existing_styles:
+                    self._update_style_fast(target_doc.styles[style_name], style_data)
+                elif style_name not in self.BUILTIN_STYLES:
+                    self._create_style_fast(target_doc, style_name, style_data)
+            except Exception as e:
+                if self.debug:
+                    logger.warning(f"Style operation failed for {style_name}: {e}")
     
-    def update_existing_style(self, style, style_info):
-        """Update an existing style with template formatting"""
+    def _update_style_fast(self, style, style_data):
+        """Fast style update with minimal attribute access"""
+        # Update font properties
+        if 'font' in style_data and hasattr(style, 'font') and style.font:
+            font_data = style_data['font']
+            font = style.font
+            
+            # Batch update font attributes
+            for attr, value in font_data.items():
+                if attr == 'color':
+                    if hasattr(font, 'color') and font.color:
+                        font.color.rgb = value
+                else:
+                    setattr(font, attr, value)
+        
+        # Update paragraph properties
+        if 'paragraph' in style_data and hasattr(style, 'paragraph_format') and style.paragraph_format:
+            para_data = style_data['paragraph']
+            pf = style.paragraph_format
+            
+            # Batch update paragraph attributes
+            for attr, value in para_data.items():
+                setattr(pf, attr, value)
+    
+    def _create_style_fast(self, doc, style_name, style_data):
+        """Fast style creation with error handling"""
         try:
-            # Update font formatting
-            if 'font' in style_info and hasattr(style, 'font') and style.font:
-                font_info = style_info['font']
-                if 'name' in font_info:
-                    style.font.name = font_info['name']
-                if 'size' in font_info:
-                    style.font.size = font_info['size']
-                if 'bold' in font_info:
-                    style.font.bold = font_info['bold']
-                if 'italic' in font_info:
-                    style.font.italic = font_info['italic']
-                if 'underline' in font_info:
-                    style.font.underline = font_info['underline']
-                if 'color' in font_info:
-                    style.font.color.rgb = font_info['color']
-            
-            # Update paragraph formatting if it's a paragraph style
-            if style_info['type'] == 'paragraph' and hasattr(style, 'paragraph_format'):
-                if 'paragraph' in style_info:
-                    para_info = style_info['paragraph']
-                    pf = style.paragraph_format
-                    if 'alignment' in para_info:
-                        pf.alignment = para_info['alignment']
-                    if 'space_before' in para_info:
-                        pf.space_before = para_info['space_before']
-                    if 'space_after' in para_info:
-                        pf.space_after = para_info['space_after']
-                    if 'line_spacing' in para_info:
-                        pf.line_spacing = para_info['line_spacing']
-                    if 'first_line_indent' in para_info:
-                        pf.first_line_indent = para_info['first_line_indent']
-                    if 'left_indent' in para_info:
-                        pf.left_indent = para_info['left_indent']
-                    if 'right_indent' in para_info:
-                        pf.right_indent = para_info['right_indent']
+            style_type = WD_STYLE_TYPE.PARAGRAPH if style_data['type'] == 'paragraph' else WD_STYLE_TYPE.CHARACTER
+            new_style = doc.styles.add_style(style_name, style_type)
+            self._update_style_fast(new_style, style_data)
         except Exception as e:
-            print(f"Error updating style: {e}")
+            if self.debug:
+                logger.warning(f"Failed to create style {style_name}: {e}")
     
-    def create_paragraph_style(self, doc, style_name, style_info):
-        """Create a new paragraph style in the document"""
-        try:
-            # Skip creating built-in styles that might conflict
-            if style_name in ['Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4', 'Heading 5', 'Heading 6', 'Title']:
-                return
-            
-            styles = doc.styles
-            style = styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
-            
-            # Set base style if specified
-            if style_info.get('base_style') and style_info['base_style'] != style_name:
-                try:
-                    style.base_style = styles[style_info['base_style']]
-                except KeyError:
-                    pass
-            
-            self.update_existing_style(style, style_info)
-        except Exception as e:
-            print(f"Error creating paragraph style '{style_name}': {e}")
-    
-    def create_character_style(self, doc, style_name, style_info):
-        """Create a new character style in the document"""
-        try:
-            styles = doc.styles
-            style = styles.add_style(style_name, WD_STYLE_TYPE.CHARACTER)
-            
-            # Set base style if specified
-            if style_info.get('base_style') and style_info['base_style'] != style_name:
-                try:
-                    style.base_style = styles[style_info['base_style']]
-                except KeyError:
-                    pass
-            
-            self.update_existing_style(style, style_info)
-        except Exception as e:
-            print(f"Error creating character style '{style_name}': {e}")
-    
-    def find_best_style_for_content(self, text):
-        """Find the best style for given content based on content analysis"""
-        content_type = self.categorize_content(text)
-        text_lower = text.lower().strip()
+    def _batch_apply_paragraph_styles(self, target_doc):
+        """Apply styles to all paragraphs in optimized batch"""
+        # Collect all paragraphs
+        all_paragraphs = list(target_doc.paragraphs)
         
-        # Look for styles that match the content type
-        matching_styles = []
-        for style_name, style_info in self.template_styles.items():
-            if style_info.get('primary_content_type') == content_type:
-                matching_styles.append((style_name, style_info))
+        # Add table paragraphs
+        for table in target_doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    all_paragraphs.extend(cell.paragraphs)
         
-        # If we found matching styles, return the first one
-        if matching_styles:
-            return matching_styles[0][0]
-        
-        # Fallback: try to match based on style name patterns
-        if content_type == 'heading':
-            # Look for heading styles
-            for style_name in self.template_styles.keys():
-                if 'heading' in style_name.lower() or 'title' in style_name.lower():
-                    return style_name
-        
-        elif content_type == 'list_item':
-            # Look for list styles
-            for style_name in self.template_styles.keys():
-                if 'list' in style_name.lower() or 'bullet' in style_name.lower():
-                    return style_name
-        
-        # Final fallback: use Normal style or the first available style
-        if 'Normal' in self.template_styles:
-            return 'Normal'
-        elif self.template_styles:
-            return list(self.template_styles.keys())[0]
-        
-        return None
+        # Batch process paragraphs
+        for paragraph in all_paragraphs:
+            text = paragraph.text.strip()
+            if text:
+                content_type = self._categorize_content_fast(text)
+                best_style = self.content_style_cache.get(content_type)
+                
+                if best_style:
+                    try:
+                        paragraph.style = target_doc.styles[best_style]
+                        if self.debug:
+                            logger.info(f"Applied '{best_style}' to: {text[:30]}...")
+                    except KeyError:
+                        if self.debug:
+                            logger.warning(f"Style '{best_style}' not found")
     
     def apply_formatting(self, template_path, target_path):
-        """Main method to apply formatting from template to target document"""
-        print(f"Extracting styles from template: {template_path}")
+        """Optimized main formatting method"""
+        if self.debug:
+            logger.info(f"Processing: {template_path} -> {target_path}")
+        
+        # Extract styles and patterns
         self.extract_styles_from_template(template_path)
         
-        print(f"Applying styles to target: {target_path}")
+        # Apply to target document
         target_doc = self.apply_styles_to_target(target_path)
         
-        # Save the formatted document
+        # Save efficiently
         output_path = tempfile.mktemp(suffix='.docx')
         target_doc.save(output_path)
-        print(f"Formatted document saved to: {output_path}")
+        
+        if self.debug:
+            logger.info(f"Completed: {output_path}")
         
         return output_path
+    
+    def __del__(self):
+        """Clean up cache when object is destroyed"""
+        self._categorize_content_fast.cache_clear()
