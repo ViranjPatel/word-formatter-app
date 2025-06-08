@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Word Document Formatter</title>
+    <title>Word Document Formatter & LaTeX Converter</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>📄 Word Document Formatter</h1>
-            <p>Apply formatting from one Word document to another</p>
+            <h1>📄 Document Processor</h1>
+            <p>Format Word documents or convert to LaTeX</p>
         </header>
         
         <main>
@@ -24,41 +24,158 @@
                 {% endif %}
             {% endwith %}
             
-            <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="upload-form">
-                <div class="file-group">
-                    <label for="template_file">📋 Template Document (.docx)</label>
-                    <p class="help-text">Select the document with the formatting you want to copy</p>
-                    <input type="file" id="template_file" name="template_file" accept=".docx" required>
-                </div>
-                
-                <div class="file-group">
-                    <label for="target_file">📝 Target Document (.docx)</label>
-                    <p class="help-text">Select the document you want to apply formatting to</p>
-                    <input type="file" id="target_file" name="target_file" accept=".docx" required>
-                </div>
-                
-                <button type="submit" class="process-btn">✨ Apply Formatting</button>
-            </form>
+            <!-- Mode Selection Tabs -->
+            <div class="mode-selector">
+                <button type="button" class="mode-tab active" data-mode="format">
+                    ✨ Format Document
+                </button>
+                <button type="button" class="mode-tab" data-mode="latex">
+                    📝 Convert to LaTeX
+                </button>
+            </div>
             
-            <div class="info-section">
-                <h3>How it works:</h3>
-                <ol>
-                    <li>Upload a <strong>template document</strong> that has the formatting you like</li>
-                    <li>Upload a <strong>target document</strong> that you want to format</li>
-                    <li>Click "Apply Formatting" to process the documents</li>
-                    <li>Download your newly formatted document!</li>
-                </ol>
+            <!-- Format Document Mode -->
+            <div id="format-mode" class="mode-content active">
+                <div class="mode-description">
+                    <h3>📋 Word Document Formatting</h3>
+                    <p>Apply formatting styles from one Word document to another</p>
+                </div>
                 
-                <div class="note">
-                    <strong>Note:</strong> This tool copies font styles, sizes, colors, and basic formatting. 
-                    Complex layouts and advanced formatting may not be preserved.
+                <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="upload-form">
+                    <input type="hidden" name="operation" value="format">
+                    
+                    <div class="file-group">
+                        <label for="template_file">📄 Template Document (.docx)</label>
+                        <p class="help-text">Select the document with the formatting you want to copy</p>
+                        <input type="file" id="template_file" name="template_file" accept=".docx" required>
+                    </div>
+                    
+                    <div class="file-group">
+                        <label for="target_file">📝 Target Document (.docx)</label>
+                        <p class="help-text">Select the document you want to apply formatting to</p>
+                        <input type="file" id="target_file" name="target_file" accept=".docx" required>
+                    </div>
+                    
+                    <button type="submit" class="process-btn">
+                        <span class="btn-icon">✨</span>
+                        Apply Formatting
+                    </button>
+                </form>
+                
+                <div class="info-section">
+                    <h4>How Word Formatting Works:</h4>
+                    <ol>
+                        <li>Upload a <strong>template document</strong> with your desired formatting styles</li>
+                        <li>Upload a <strong>target document</strong> that needs formatting</li>
+                        <li>Our AI analyzes the template's heading styles, fonts, and formatting</li>
+                        <li>Download your professionally formatted document!</li>
+                    </ol>
+                </div>
+            </div>
+            
+            <!-- LaTeX Conversion Mode -->
+            <div id="latex-mode" class="mode-content">
+                <div class="mode-description">
+                    <h3>📐 LaTeX Conversion</h3>
+                    <p>Convert Word documents to LaTeX format for academic publishing</p>
+                </div>
+                
+                <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="upload-form">
+                    <input type="hidden" name="operation" value="latex">
+                    
+                    <div class="file-group">
+                        <label for="latex_file">📄 Word Document (.docx)</label>
+                        <p class="help-text">Select the Word document you want to convert to LaTeX</p>
+                        <input type="file" id="latex_file" name="latex_file" accept=".docx" required>
+                    </div>
+                    
+                    <button type="submit" class="process-btn latex-btn">
+                        <span class="btn-icon">📐</span>
+                        Convert to LaTeX
+                    </button>
+                </form>
+                
+                <div class="info-section">
+                    <h4>LaTeX Conversion Features:</h4>
+                    <ul>
+                        <li>✅ <strong>Smart Structure Detection:</strong> Automatically converts headings to sections</li>
+                        <li>✅ <strong>Formatting Preservation:</strong> Maintains bold, italic, and underline formatting</li>
+                        <li>✅ <strong>Table Conversion:</strong> Converts Word tables to LaTeX tabular format</li>
+                        <li>✅ <strong>List Handling:</strong> Converts bulleted and numbered lists</li>
+                        <li>✅ <strong>Academic Ready:</strong> Includes necessary packages for academic papers</li>
+                        <li>✅ <strong>Professional Output:</strong> Clean, compilable LaTeX code</li>
+                    </ul>
+                    
+                    <div class="latex-note">
+                        <strong>💡 Pro Tip:</strong> The generated .tex file includes all necessary packages and can be compiled directly with LaTeX editors like Overleaf, TeXworks, or TeXStudio.
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Universal File Requirements -->
+            <div class="requirements-section">
+                <h4>📋 File Requirements:</h4>
+                <div class="requirements-grid">
+                    <div class="requirement-item">
+                        <span class="req-icon">📁</span>
+                        <strong>Format:</strong> .docx files only
+                    </div>
+                    <div class="requirement-item">
+                        <span class="req-icon">📏</span>
+                        <strong>Size:</strong> Maximum 16MB
+                    </div>
+                    <div class="requirement-item">
+                        <span class="req-icon">🎯</span>
+                        <strong>Quality:</strong> Best results with proper heading styles
+                    </div>
+                    <div class="requirement-item">
+                        <span class="req-icon">⚡</span>
+                        <strong>Speed:</strong> Processing typically under 10 seconds
+                    </div>
                 </div>
             </div>
         </main>
         
         <footer>
-            <p>Built with Python, Flask, and python-docx</p>
+            <p>Built with Python, Flask, python-docx, and LaTeX conversion technology</p>
         </footer>
     </div>
+
+    <script>
+        // Mode switching functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const modeTabs = document.querySelectorAll('.mode-tab');
+            const modeContents = document.querySelectorAll('.mode-content');
+            
+            modeTabs.forEach(tab => {
+                tab.addEventListener('click', function() {
+                    const targetMode = this.getAttribute('data-mode');
+                    
+                    // Remove active class from all tabs and contents
+                    modeTabs.forEach(t => t.classList.remove('active'));
+                    modeContents.forEach(c => c.classList.remove('active'));
+                    
+                    // Add active class to clicked tab and corresponding content
+                    this.classList.add('active');
+                    document.getElementById(targetMode + '-mode').classList.add('active');
+                });
+            });
+            
+            // File input styling enhancement
+            const fileInputs = document.querySelectorAll('input[type="file"]');
+            fileInputs.forEach(input => {
+                input.addEventListener('change', function() {
+                    const fileName = this.files[0]?.name;
+                    if (fileName) {
+                        const label = this.previousElementSibling?.previousElementSibling;
+                        if (label) {
+                            label.style.color = '#4f46e5';
+                            label.innerHTML = label.innerHTML.split('(')[0] + `(${fileName})`;
+                        }
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>
