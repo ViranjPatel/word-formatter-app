@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for
+from flask import Flask, render_template, request, send_file, flash, redirect, url_for, jsonify
 import os
 from werkzeug.utils import secure_filename
 from document_formatter import DocumentFormatter
@@ -32,80 +32,140 @@ def process():
     temp_files = []  # Track temporary files for cleanup
     
     try:
-        # Validate file uploads
-        if 'template_file' not in request.files or 'target_file' not in request.files:
-            flash('Please select both template and target files')
+        operation = request.form.get('operation', 'format')
+        
+        if operation == 'format':
+            return process_formatting(temp_files)
+        elif operation == 'latex':
+            return process_latex_conversion(temp_files)
+        else:
+            flash('Invalid operation selected')
             return redirect(url_for('index'))
-        
-        template_file = request.files['template_file']
-        target_file = request.files['target_file']
-        
-        # Validate file selection
-        if not template_file.filename or not target_file.filename:
-            flash('Please select both files')
-            return redirect(url_for('index'))
-        
-        # Validate file extensions
-        if not (allowed_file(template_file.filename) and allowed_file(target_file.filename)):
-            flash('Only .docx files are allowed')
-            return redirect(url_for('index'))
-        
-        # Create temporary files with context management
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_template:
-            template_file.save(temp_template.name)
-            template_path = temp_template.name
-            temp_files.append(template_path)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_target:
-            target_file.save(temp_target.name)
-            target_path = temp_target.name
-            temp_files.append(target_path)
-        
-        # Process documents with optimized formatter
-        formatter = DocumentFormatter(debug=False)  # Disable debug for production
-        output_path = formatter.apply_formatting(template_path, target_path)
-        temp_files.append(output_path)
-        
-        # Generate descriptive output filename
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        base_name = os.path.splitext(target_file.filename)[0]
-        output_filename = f'{base_name}_formatted_{timestamp}.docx'
-        
-        # Send file with automatic cleanup
-        def cleanup_files():
-            for filepath in temp_files:
-                try:
-                    if os.path.exists(filepath):
-                        os.unlink(filepath)
-                except OSError:
-                    pass  # Ignore cleanup errors
-        
-        # Register cleanup to happen after response
-        @app.after_request
-        def cleanup_after_response(response):
-            cleanup_files()
-            return response
-        
-        return send_file(
-            output_path, 
-            as_attachment=True, 
-            download_name=output_filename,
-            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        )
-        
+            
     except Exception as e:
         # Clean up temp files on error
-        for filepath in temp_files:
-            try:
-                if os.path.exists(filepath):
-                    os.unlink(filepath)
-            except OSError:
-                pass
-        
+        cleanup_temp_files(temp_files)
         error_msg = f'Error processing documents: {str(e)}'
         app.logger.error(error_msg)
         flash(error_msg)
         return redirect(url_for('index'))
+
+def process_formatting(temp_files):
+    """Handle Word document formatting"""
+    # Validate file uploads
+    if 'template_file' not in request.files or 'target_file' not in request.files:
+        flash('Please select both template and target files for formatting')
+        return redirect(url_for('index'))
+    
+    template_file = request.files['template_file']
+    target_file = request.files['target_file']
+    
+    # Validate file selection
+    if not template_file.filename or not target_file.filename:
+        flash('Please select both files')
+        return redirect(url_for('index'))
+    
+    # Validate file extensions
+    if not (allowed_file(template_file.filename) and allowed_file(target_file.filename)):
+        flash('Only .docx files are allowed')
+        return redirect(url_for('index'))
+    
+    # Create temporary files
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_template:
+        template_file.save(temp_template.name)
+        template_path = temp_template.name
+        temp_files.append(template_path)
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_target:
+        target_file.save(temp_target.name)
+        target_path = temp_target.name
+        temp_files.append(target_path)
+    
+    # Process documents with optimized formatter
+    formatter = DocumentFormatter(debug=False)
+    output_path = formatter.apply_formatting(template_path, target_path)
+    temp_files.append(output_path)
+    
+    # Generate descriptive output filename
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base_name = os.path.splitext(target_file.filename)[0]
+    output_filename = f'{base_name}_formatted_{timestamp}.docx'
+    
+    return send_file_with_cleanup(
+        output_path, 
+        output_filename, 
+        temp_files,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+
+def process_latex_conversion(temp_files):
+    """Handle LaTeX conversion"""
+    # Validate file upload
+    if 'latex_file' not in request.files:
+        flash('Please select a Word document to convert to LaTeX')
+        return redirect(url_for('index'))
+    
+    latex_file = request.files['latex_file']
+    
+    # Validate file selection
+    if not latex_file.filename:
+        flash('Please select a file to convert')
+        return redirect(url_for('index'))
+    
+    # Validate file extension
+    if not allowed_file(latex_file.filename):
+        flash('Only .docx files are allowed')
+        return redirect(url_for('index'))
+    
+    # Create temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_latex:
+        latex_file.save(temp_latex.name)
+        latex_path = temp_latex.name
+        temp_files.append(latex_path)
+    
+    # Convert to LaTeX
+    formatter = DocumentFormatter(debug=False)
+    output_path = formatter.convert_to_latex(latex_path)
+    temp_files.append(output_path)
+    
+    # Generate output filename
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base_name = os.path.splitext(latex_file.filename)[0]
+    output_filename = f'{base_name}_converted_{timestamp}.tex'
+    
+    return send_file_with_cleanup(
+        output_path, 
+        output_filename, 
+        temp_files,
+        'text/plain'
+    )
+
+def send_file_with_cleanup(file_path, filename, temp_files, mimetype):
+    """Send file and schedule cleanup"""
+    def cleanup_files():
+        cleanup_temp_files(temp_files)
+    
+    # Register cleanup to happen after response
+    @app.after_request
+    def cleanup_after_response(response):
+        cleanup_files()
+        return response
+    
+    return send_file(
+        file_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype=mimetype
+    )
+
+def cleanup_temp_files(temp_files):
+    """Clean up temporary files"""
+    for filepath in temp_files:
+        try:
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+        except OSError:
+            pass  # Ignore cleanup errors
 
 @app.errorhandler(413)
 def too_large(e):
