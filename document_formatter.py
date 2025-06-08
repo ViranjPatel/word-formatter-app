@@ -1,8 +1,9 @@
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml.ns import nsdecls, qn
+from docx.enum.dml import MSO_THEME_COLOR
 import tempfile
 import os
 import re
@@ -15,41 +16,54 @@ logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 class LaTeXConverter:
-    """Convert Word documents to LaTeX format with proper formatting"""
+    """Advanced Word to LaTeX converter with comprehensive formatting support"""
     
     def __init__(self, debug=False):
         self.debug = debug
         self.latex_content = []
         self.packages = set()
         self.document_class = "article"
+        self.extracted_styles = {}
+        self.font_families_used = set()
+        self.colors_used = set()
+        self.custom_commands = []
         
-        # LaTeX command mappings
+        # Enhanced style mappings
         self.style_mappings = {
+            'Title': r'\title{{{content}}}',
+            'Subtitle': r'\subtitle{{{content}}}',
             'Heading 1': r'\section{{{content}}}',
             'Heading 2': r'\subsection{{{content}}}',
             'Heading 3': r'\subsubsection{{{content}}}',
             'Heading 4': r'\paragraph{{{content}}}',
             'Heading 5': r'\subparagraph{{{content}}}',
             'Heading 6': r'\subparagraph{{{content}}}',
-            'Title': r'\title{{{content}}}',
-            'Subtitle': r'\subtitle{{{content}}}',
+        }
+        
+        # Alignment mappings
+        self.alignment_map = {
+            WD_ALIGN_PARAGRAPH.LEFT: 'flushleft',
+            WD_ALIGN_PARAGRAPH.CENTER: 'center',
+            WD_ALIGN_PARAGRAPH.RIGHT: 'flushright',
+            WD_ALIGN_PARAGRAPH.JUSTIFY: 'justify',
         }
         
         if debug:
             logger.setLevel(logging.INFO)
     
     def convert_document(self, docx_path):
-        """Convert Word document to LaTeX format"""
+        """Convert Word document to LaTeX with comprehensive formatting"""
         doc = Document(docx_path)
         
-        # Initialize LaTeX document
-        self._initialize_latex_document()
+        # Extract comprehensive document information
+        self._analyze_document_styles(doc)
+        self._extract_document_properties(doc)
         
-        # Process document content
-        self._process_paragraphs(doc.paragraphs)
+        # Initialize LaTeX document with proper packages
+        self._initialize_comprehensive_latex()
         
-        # Process tables
-        self._process_tables(doc.tables)
+        # Process document content with advanced formatting
+        self._process_document_content(doc)
         
         # Finalize document
         self._finalize_latex_document()
@@ -60,71 +74,315 @@ class LaTeXConverter:
             f.write('\n'.join(self.latex_content))
         
         if self.debug:
-            logger.info(f"LaTeX document created: {output_path}")
+            logger.info(f"Advanced LaTeX document created: {output_path}")
         
         return output_path
     
-    def _initialize_latex_document(self):
-        """Initialize LaTeX document structure"""
+    def _analyze_document_styles(self, doc):
+        """Comprehensively analyze all styles used in the document"""
+        # Extract all paragraph and character styles
+        for style in doc.styles:
+            if style.type in [WD_STYLE_TYPE.PARAGRAPH, WD_STYLE_TYPE.CHARACTER]:
+                self.extracted_styles[style.name] = self._extract_style_properties(style)
+        
+        # Analyze actual usage in document
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                style_name = paragraph.style.name
+                if style_name not in self.extracted_styles:
+                    self.extracted_styles[style_name] = {}
+                
+                # Extract paragraph-specific formatting
+                self._extract_paragraph_formatting(paragraph, style_name)
+        
+        # Analyze tables
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        if paragraph.text.strip():
+                            self._extract_paragraph_formatting(paragraph, 'table_content')
+    
+    def _extract_style_properties(self, style):
+        """Extract comprehensive style properties"""
+        properties = {
+            'type': 'paragraph' if style.type == WD_STYLE_TYPE.PARAGRAPH else 'character',
+            'font': {},
+            'paragraph': {}
+        }
+        
+        # Extract font properties
+        if hasattr(style, 'font') and style.font:
+            font = style.font
+            if font.name:
+                properties['font']['name'] = font.name
+                self.font_families_used.add(font.name)
+            if font.size:
+                properties['font']['size'] = font.size.pt
+            if font.bold is not None:
+                properties['font']['bold'] = font.bold
+            if font.italic is not None:
+                properties['font']['italic'] = font.italic
+            if font.underline is not None:
+                properties['font']['underline'] = font.underline
+            if font.color and font.color.rgb:
+                color_hex = str(font.color.rgb)
+                properties['font']['color'] = color_hex
+                self.colors_used.add(color_hex)
+        
+        # Extract paragraph properties
+        if style.type == WD_STYLE_TYPE.PARAGRAPH and hasattr(style, 'paragraph_format'):
+            pf = style.paragraph_format
+            if pf.alignment is not None:
+                properties['paragraph']['alignment'] = pf.alignment
+            if pf.space_before is not None:
+                properties['paragraph']['space_before'] = pf.space_before.pt
+            if pf.space_after is not None:
+                properties['paragraph']['space_after'] = pf.space_after.pt
+            if pf.line_spacing is not None:
+                properties['paragraph']['line_spacing'] = pf.line_spacing
+            if pf.first_line_indent is not None:
+                properties['paragraph']['first_line_indent'] = pf.first_line_indent.pt
+            if pf.left_indent is not None:
+                properties['paragraph']['left_indent'] = pf.left_indent.pt
+            if pf.right_indent is not None:
+                properties['paragraph']['right_indent'] = pf.right_indent.pt
+        
+        return properties
+    
+    def _extract_paragraph_formatting(self, paragraph, style_name):
+        """Extract formatting from actual paragraph usage"""
+        if style_name not in self.extracted_styles:
+            self.extracted_styles[style_name] = {'font': {}, 'paragraph': {}}
+        
+        # Extract paragraph format properties
+        pf = paragraph.paragraph_format
+        if pf.alignment is not None:
+            self.extracted_styles[style_name]['paragraph']['alignment'] = pf.alignment
+        if pf.space_before is not None:
+            self.extracted_styles[style_name]['paragraph']['space_before'] = pf.space_before.pt
+        if pf.space_after is not None:
+            self.extracted_styles[style_name]['paragraph']['space_after'] = pf.space_after.pt
+        if pf.left_indent is not None:
+            self.extracted_styles[style_name]['paragraph']['left_indent'] = pf.left_indent.pt
+        if pf.right_indent is not None:
+            self.extracted_styles[style_name]['paragraph']['right_indent'] = pf.right_indent.pt
+        if pf.first_line_indent is not None:
+            self.extracted_styles[style_name]['paragraph']['first_line_indent'] = pf.first_line_indent.pt
+        
+        # Extract run-level formatting
+        for run in paragraph.runs:
+            if run.font.name:
+                self.font_families_used.add(run.font.name)
+            if run.font.color and run.font.color.rgb:
+                self.colors_used.add(str(run.font.color.rgb))
+    
+    def _extract_document_properties(self, doc):
+        """Extract document-level properties"""
+        # Could extract document title, author, etc. from doc.core_properties
+        pass
+    
+    def _initialize_comprehensive_latex(self):
+        """Initialize LaTeX with comprehensive packages and settings"""
         self.latex_content = [
-            f'\\documentclass{{{self.document_class}}}',
+            f'\\documentclass[11pt,a4paper]{{{self.document_class}}}',
             '',
-            '% Packages',
+            '% Essential packages',
             '\\usepackage[utf8]{inputenc}',
             '\\usepackage[T1]{fontenc}',
+            '\\usepackage[english]{babel}',
             '\\usepackage{geometry}',
+            '',
+            '% Math packages',
             '\\usepackage{amsmath}',
             '\\usepackage{amsfonts}',
             '\\usepackage{amssymb}',
+            '\\usepackage{mathtools}',
+            '',
+            '% Graphics and colors',
             '\\usepackage{graphicx}',
-            '\\usepackage{hyperref}',
+            '\\usepackage{xcolor}',
+            '\\usepackage{colortbl}',
+            '',
+            '% Table packages',
             '\\usepackage{booktabs}',
             '\\usepackage{array}',
             '\\usepackage{longtable}',
+            '\\usepackage{tabularx}',
+            '\\usepackage{multirow}',
+            '',
+            '% List packages',
             '\\usepackage{enumerate}',
             '\\usepackage{enumitem}',
             '',
-            '% Document settings',
+            '% Text formatting',
+            '\\usepackage{soul}',
+            '\\usepackage{ulem}',
+            '\\usepackage{textcomp}',
+            '',
+            '% Layout and spacing',
+            '\\usepackage{setspace}',
+            '\\usepackage{indentfirst}',
+            '\\usepackage{changepage}',
+            '',
+            '% Hyperlinks',
+            '\\usepackage{hyperref}',
+            '',
+            '% Font packages',
+        ]
+        
+        # Add font support
+        self._add_font_support()
+        
+        # Add color definitions
+        self._add_color_definitions()
+        
+        # Add geometry settings
+        self.latex_content.extend([
+            '',
+            '% Document geometry',
             '\\geometry{margin=1in}',
+            '',
+            '% Paragraph settings',
             '\\setlength{\\parindent}{0pt}',
-            '\\setlength{\\parskip}{6pt}',
+            '\\setlength{\\parskip}{6pt plus 2pt minus 1pt}',
+            '',
+            '% Custom commands',
+        ])
+        
+        # Add custom commands
+        self._add_custom_commands()
+        
+        self.latex_content.extend([
             '',
             '\\begin{document}',
             ''
-        ]
+        ])
     
-    def _process_paragraphs(self, paragraphs):
-        """Process all paragraphs and convert to LaTeX"""
+    def _add_font_support(self):
+        """Add font support based on fonts used in document"""
+        if 'Times New Roman' in self.font_families_used:
+            self.latex_content.append('\\usepackage{times}')
+        if 'Arial' in self.font_families_used or 'Helvetica' in self.font_families_used:
+            self.latex_content.append('\\usepackage{helvet}')
+        if 'Courier' in self.font_families_used or 'Courier New' in self.font_families_used:
+            self.latex_content.append('\\usepackage{courier}')
+    
+    def _add_color_definitions(self):
+        """Add color definitions based on colors used"""
+        if self.colors_used:
+            self.latex_content.append('')
+            self.latex_content.append('% Color definitions')
+            for i, color_hex in enumerate(sorted(self.colors_used)):
+                if color_hex != 'None':
+                    try:
+                        # Convert hex to RGB
+                        color_hex = color_hex.replace('#', '')
+                        if len(color_hex) == 6:
+                            r = int(color_hex[0:2], 16) / 255.0
+                            g = int(color_hex[2:4], 16) / 255.0
+                            b = int(color_hex[4:6], 16) / 255.0
+                            self.latex_content.append(f'\\definecolor{{customcolor{i}}}{{rgb}}{{{r:.3f},{g:.3f},{b:.3f}}}')
+                    except:
+                        pass
+    
+    def _add_custom_commands(self):
+        """Add custom LaTeX commands for consistent formatting"""
+        self.latex_content.extend([
+            '% Custom formatting commands',
+            '\\newcommand{\\customspacing}[1]{\\vspace{#1}}',
+            '\\newcommand{\\customindent}[1]{\\hspace{#1}}',
+        ])
+    
+    def _process_document_content(self, doc):
+        """Process document content with comprehensive formatting"""
+        # Process main paragraphs
+        self._process_paragraphs_advanced(doc.paragraphs)
+        
+        # Process tables with advanced formatting
+        self._process_tables_advanced(doc.tables)
+    
+    def _process_paragraphs_advanced(self, paragraphs):
+        """Process paragraphs with advanced formatting preservation"""
         for paragraph in paragraphs:
             if paragraph.text.strip():
-                latex_para = self._convert_paragraph(paragraph)
+                latex_para = self._convert_paragraph_advanced(paragraph)
                 if latex_para:
-                    self.latex_content.append(latex_para)
+                    self.latex_content.extend(latex_para)
                     self.latex_content.append('')
     
-    def _convert_paragraph(self, paragraph):
-        """Convert a single paragraph to LaTeX"""
+    def _convert_paragraph_advanced(self, paragraph):
+        """Convert paragraph with comprehensive formatting"""
         text = paragraph.text.strip()
         if not text:
-            return ''
+            return []
         
         style_name = paragraph.style.name
+        result = []
         
-        # Handle specific styles
+        # Handle special styles first
         if style_name in self.style_mappings:
-            content = self._escape_latex_chars(text)
-            return self.style_mappings[style_name].format(content=content)
+            content = self._process_runs_advanced(paragraph.runs)
+            formatted_content = self.style_mappings[style_name].format(content=content)
+            return [formatted_content]
         
-        # Handle lists
-        if self._is_list_item(text):
-            return self._convert_list_item(text)
+        # Handle lists with proper formatting
+        if self._is_advanced_list_item(paragraph):
+            return self._convert_advanced_list_item(paragraph)
         
-        # Regular paragraph
-        content = self._process_runs(paragraph.runs)
-        return content if content.strip() else ''
+        # Process regular paragraph with formatting
+        paragraph_latex = []
+        
+        # Add paragraph formatting
+        para_formatting = self._get_paragraph_formatting(paragraph)
+        if para_formatting['start']:
+            paragraph_latex.extend(para_formatting['start'])
+        
+        # Process the paragraph content
+        content = self._process_runs_advanced(paragraph.runs)
+        if content.strip():
+            paragraph_latex.append(content)
+        
+        # Add paragraph formatting end
+        if para_formatting['end']:
+            paragraph_latex.extend(para_formatting['end'])
+        
+        return paragraph_latex
     
-    def _process_runs(self, runs):
-        """Process runs within a paragraph for formatting"""
+    def _get_paragraph_formatting(self, paragraph):
+        """Extract comprehensive paragraph formatting"""
+        formatting = {'start': [], 'end': []}
+        pf = paragraph.paragraph_format
+        
+        # Handle alignment
+        if pf.alignment and pf.alignment in self.alignment_map:
+            env = self.alignment_map[pf.alignment]
+            formatting['start'].append(f'\\begin{{{env}}}')
+            formatting['end'].insert(0, f'\\end{{{env}}}')
+        
+        # Handle indentation
+        indent_commands = []
+        if pf.left_indent and pf.left_indent.pt > 0:
+            indent_commands.append(f'\\customindent{{{pf.left_indent.pt}pt}}')
+        if pf.first_line_indent and pf.first_line_indent.pt != 0:
+            if pf.first_line_indent.pt > 0:
+                indent_commands.append(f'\\indent\\customindent{{{pf.first_line_indent.pt}pt}}')
+            else:
+                indent_commands.append('\\noindent')
+        
+        if indent_commands:
+            formatting['start'].extend(indent_commands)
+        
+        # Handle spacing
+        if pf.space_before and pf.space_before.pt > 0:
+            formatting['start'].append(f'\\customspacing{{{pf.space_before.pt}pt}}')
+        if pf.space_after and pf.space_after.pt > 0:
+            formatting['end'].append(f'\\customspacing{{{pf.space_after.pt}pt}}')
+        
+        return formatting
+    
+    def _process_runs_advanced(self, runs):
+        """Process runs with comprehensive formatting"""
         content_parts = []
         
         for run in runs:
@@ -135,90 +393,157 @@ class LaTeXConverter:
             # Escape LaTeX special characters
             escaped_text = self._escape_latex_chars(text)
             
-            # Apply formatting
-            formatted_text = self._apply_run_formatting(escaped_text, run)
+            # Apply comprehensive formatting
+            formatted_text = self._apply_comprehensive_run_formatting(escaped_text, run)
             content_parts.append(formatted_text)
         
         return ''.join(content_parts)
     
-    def _apply_run_formatting(self, text, run):
-        """Apply formatting to text based on run properties"""
+    def _apply_comprehensive_run_formatting(self, text, run):
+        """Apply comprehensive formatting to text"""
         if not text.strip():
             return text
         
         formatted = text
         
-        # Bold
+        # Font family
+        if run.font.name and run.font.name != 'Calibri':  # Don't change default
+            if run.font.name == 'Times New Roman':
+                formatted = f'\\textrm{{{formatted}}}'
+            elif run.font.name in ['Arial', 'Helvetica']:
+                formatted = f'\\textsf{{{formatted}}}'
+            elif run.font.name in ['Courier', 'Courier New']:
+                formatted = f'\\texttt{{{formatted}}}'
+        
+        # Font size
+        if run.font.size:
+            size_pt = run.font.size.pt
+            if size_pt >= 24:
+                formatted = f'\\Huge{{{formatted}}}'
+            elif size_pt >= 20:
+                formatted = f'\\huge{{{formatted}}}'
+            elif size_pt >= 17:
+                formatted = f'\\LARGE{{{formatted}}}'
+            elif size_pt >= 14:
+                formatted = f'\\Large{{{formatted}}}'
+            elif size_pt >= 12:
+                formatted = f'\\large{{{formatted}}}'
+            elif size_pt >= 10:
+                formatted = f'\\normalsize{{{formatted}}}'
+            elif size_pt >= 9:
+                formatted = f'\\small{{{formatted}}}'
+            elif size_pt >= 8:
+                formatted = f'\\footnotesize{{{formatted}}}'
+            elif size_pt >= 6:
+                formatted = f'\\scriptsize{{{formatted}}}'
+            else:
+                formatted = f'\\tiny{{{formatted}}}'
+        
+        # Color
+        if run.font.color and run.font.color.rgb:
+            color_hex = str(run.font.color.rgb)
+            if color_hex in self.colors_used:
+                color_index = sorted(list(self.colors_used)).index(color_hex)
+                formatted = f'\\textcolor{{customcolor{color_index}}}{{{formatted}}}'
+        
+        # Bold, italic, underline (apply in reverse order to nest properly)
+        if run.underline:
+            formatted = f'\\underline{{{formatted}}}'
+        if run.italic:
+            formatted = f'\\textit{{{formatted}}}'
         if run.bold:
             formatted = f'\\textbf{{{formatted}}}'
         
-        # Italic
-        if run.italic:
-            formatted = f'\\textit{{{formatted}}}'
-        
-        # Underline
-        if run.underline:
-            formatted = f'\\underline{{{formatted}}}'
-        
-        # Font size changes (approximate)
-        if run.font.size:
-            size_pt = run.font.size.pt
-            if size_pt > 14:
-                formatted = f'\\Large {{{formatted}}}'
-            elif size_pt > 12:
-                formatted = f'\\large {{{formatted}}}'
-            elif size_pt < 10:
-                formatted = f'\\small {{{formatted}}}'
-        
         return formatted
     
-    def _is_list_item(self, text):
-        """Check if text appears to be a list item"""
-        return bool(re.match(r'^[•\-\*]\s+|^\d+[\.)]\s+', text))
+    def _is_advanced_list_item(self, paragraph):
+        """Advanced list item detection"""
+        text = paragraph.text.strip()
+        # Check for various list patterns
+        return bool(re.match(r'^[•\-\*]\s+|^\d+[\.)]\s+|^[a-zA-Z][\.)]\s+|^[ivxlcdm]+[\.)]\s+', text, re.IGNORECASE))
     
-    def _convert_list_item(self, text):
-        """Convert list item to LaTeX format"""
-        # Remove list markers
-        cleaned_text = re.sub(r'^[•\-\*]\s+|^\d+[\.)]\s+', '', text)
-        escaped_text = self._escape_latex_chars(cleaned_text)
+    def _convert_advanced_list_item(self, paragraph):
+        """Convert list item with proper formatting"""
+        text = paragraph.text.strip()
         
-        # Determine list type
+        # Determine list type and extract content
         if re.match(r'^\d+[\.)]\s+', text):
             # Numbered list
-            return f'\\begin{{enumerate}}\\item {escaped_text}\\end{{enumerate}}'
+            content = re.sub(r'^\d+[\.)]\s+', '', text)
+            escaped_content = self._process_runs_advanced(paragraph.runs)
+            return [
+                '\\begin{enumerate}',
+                f'\\item {escaped_content}',
+                '\\end{enumerate}'
+            ]
+        elif re.match(r'^[a-zA-Z][\.)]\s+', text):
+            # Alphabetic list
+            content = re.sub(r'^[a-zA-Z][\.)]\s+', '', text)
+            escaped_content = self._process_runs_advanced(paragraph.runs)
+            return [
+                '\\begin{enumerate}[label=\\alph*.]',
+                f'\\item {escaped_content}',
+                '\\end{enumerate}'
+            ]
+        elif re.match(r'^[ivxlcdm]+[\.)]\s+', text, re.IGNORECASE):
+            # Roman numeral list
+            content = re.sub(r'^[ivxlcdm]+[\.)]\s+', '', text, flags=re.IGNORECASE)
+            escaped_content = self._process_runs_advanced(paragraph.runs)
+            return [
+                '\\begin{enumerate}[label=\\roman*.]',
+                f'\\item {escaped_content}',
+                '\\end{enumerate}'
+            ]
         else:
             # Bulleted list
-            return f'\\begin{{itemize}}\\item {escaped_text}\\end{{itemize}}'
+            content = re.sub(r'^[•\-\*]\s+', '', text)
+            escaped_content = self._process_runs_advanced(paragraph.runs)
+            return [
+                '\\begin{itemize}',
+                f'\\item {escaped_content}',
+                '\\end{itemize}'
+            ]
     
-    def _process_tables(self, tables):
-        """Process tables and convert to LaTeX"""
+    def _process_tables_advanced(self, tables):
+        """Process tables with advanced formatting"""
         for table in tables:
-            latex_table = self._convert_table(table)
+            latex_table = self._convert_table_advanced(table)
             if latex_table:
                 self.latex_content.extend(latex_table)
                 self.latex_content.append('')
     
-    def _convert_table(self, table):
-        """Convert a Word table to LaTeX format"""
+    def _convert_table_advanced(self, table):
+        """Convert table with comprehensive formatting"""
         if not table.rows:
             return []
         
         # Determine number of columns
         max_cols = max(len(row.cells) for row in table.rows)
         
-        # Start table
+        # Create column specification with proper alignment
+        col_spec = 'l' * max_cols  # Default to left alignment
+        
+        # Start table with advanced formatting
         latex_lines = [
             '\\begin{table}[h]',
             '\\centering',
-            f'\\begin{{tabular}}{{{"l" * max_cols}}}',
+            f'\\begin{{tabular}}{{{col_spec}}}',
             '\\toprule'
         ]
         
-        # Process rows
+        # Process rows with formatting
         for i, row in enumerate(table.rows):
             row_content = []
             for cell in row.cells[:max_cols]:
-                cell_text = self._escape_latex_chars(cell.text.strip())
+                # Process cell content with formatting
+                cell_latex = []
+                for paragraph in cell.paragraphs:
+                    if paragraph.text.strip():
+                        para_content = self._process_runs_advanced(paragraph.runs)
+                        if para_content.strip():
+                            cell_latex.append(para_content)
+                
+                cell_text = ' '.join(cell_latex) if cell_latex else ''
                 row_content.append(cell_text)
             
             # Pad row if necessary
@@ -228,7 +553,7 @@ class LaTeXConverter:
             latex_lines.append(' & '.join(row_content) + ' \\\\')
             
             # Add midrule after first row (header)
-            if i == 0:
+            if i == 0 and len(table.rows) > 1:
                 latex_lines.append('\\midrule')
         
         # End table
@@ -241,8 +566,8 @@ class LaTeXConverter:
         return latex_lines
     
     def _escape_latex_chars(self, text):
-        """Escape special LaTeX characters"""
-        # Dictionary of characters to escape
+        """Comprehensive LaTeX character escaping"""
+        # Enhanced escape mappings
         escape_chars = {
             '\\': r'\textbackslash{}',
             '{': r'\{',
@@ -254,6 +579,15 @@ class LaTeXConverter:
             '^': r'\textasciicircum{}',
             '_': r'\_',
             '~': r'\textasciitilde{}',
+            '"': r'\'\'',
+            '`': r'\`{}',
+            ''': r'\textquoteleft{}',
+            ''': r'\textquoteright{}',
+            '"': r'\textquotedblleft{}',
+            '"': r'\textquotedblright{}',
+            '–': r'--',
+            '—': r'---',
+            '…': r'\ldots{}',
         }
         
         for char, escaped in escape_chars.items():
@@ -262,7 +596,7 @@ class LaTeXConverter:
         return text
     
     def _finalize_latex_document(self):
-        """Finalize LaTeX document"""
+        """Finalize LaTeX document with proper ending"""
         self.latex_content.extend([
             '',
             '\\end{document}'
@@ -570,7 +904,7 @@ class DocumentFormatter:
         return output_path
     
     def convert_to_latex(self, docx_path):
-        """Convert Word document to LaTeX format"""
+        """Convert Word document to LaTeX with comprehensive formatting"""
         converter = LaTeXConverter(debug=self.debug)
         return converter.convert_document(docx_path)
     
