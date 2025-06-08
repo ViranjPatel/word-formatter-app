@@ -2,6 +2,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml.ns import nsdecls, qn
 import tempfile
 import os
 import re
@@ -12,6 +13,260 @@ import logging
 # Configure logging for optional debug output
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+
+class LaTeXConverter:
+    """Convert Word documents to LaTeX format with proper formatting"""
+    
+    def __init__(self, debug=False):
+        self.debug = debug
+        self.latex_content = []
+        self.packages = set()
+        self.document_class = "article"
+        
+        # LaTeX command mappings
+        self.style_mappings = {
+            'Heading 1': r'\section{{{content}}}',
+            'Heading 2': r'\subsection{{{content}}}',
+            'Heading 3': r'\subsubsection{{{content}}}',
+            'Heading 4': r'\paragraph{{{content}}}',
+            'Heading 5': r'\subparagraph{{{content}}}',
+            'Heading 6': r'\subparagraph{{{content}}}',
+            'Title': r'\title{{{content}}}',
+            'Subtitle': r'\subtitle{{{content}}}',
+        }
+        
+        if debug:
+            logger.setLevel(logging.INFO)
+    
+    def convert_document(self, docx_path):
+        """Convert Word document to LaTeX format"""
+        doc = Document(docx_path)
+        
+        # Initialize LaTeX document
+        self._initialize_latex_document()
+        
+        # Process document content
+        self._process_paragraphs(doc.paragraphs)
+        
+        # Process tables
+        self._process_tables(doc.tables)
+        
+        # Finalize document
+        self._finalize_latex_document()
+        
+        # Generate output file
+        output_path = tempfile.mktemp(suffix='.tex')
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(self.latex_content))
+        
+        if self.debug:
+            logger.info(f"LaTeX document created: {output_path}")
+        
+        return output_path
+    
+    def _initialize_latex_document(self):
+        """Initialize LaTeX document structure"""
+        self.latex_content = [
+            f'\\documentclass{{{self.document_class}}}',
+            '',
+            '% Packages',
+            '\\usepackage[utf8]{inputenc}',
+            '\\usepackage[T1]{fontenc}',
+            '\\usepackage{geometry}',
+            '\\usepackage{amsmath}',
+            '\\usepackage{amsfonts}',
+            '\\usepackage{amssymb}',
+            '\\usepackage{graphicx}',
+            '\\usepackage{hyperref}',
+            '\\usepackage{booktabs}',
+            '\\usepackage{array}',
+            '\\usepackage{longtable}',
+            '\\usepackage{enumerate}',
+            '\\usepackage{enumitem}',
+            '',
+            '% Document settings',
+            '\\geometry{margin=1in}',
+            '\\setlength{\\parindent}{0pt}',
+            '\\setlength{\\parskip}{6pt}',
+            '',
+            '\\begin{document}',
+            ''
+        ]
+    
+    def _process_paragraphs(self, paragraphs):
+        """Process all paragraphs and convert to LaTeX"""
+        for paragraph in paragraphs:
+            if paragraph.text.strip():
+                latex_para = self._convert_paragraph(paragraph)
+                if latex_para:
+                    self.latex_content.append(latex_para)
+                    self.latex_content.append('')
+    
+    def _convert_paragraph(self, paragraph):
+        """Convert a single paragraph to LaTeX"""
+        text = paragraph.text.strip()
+        if not text:
+            return ''
+        
+        style_name = paragraph.style.name
+        
+        # Handle specific styles
+        if style_name in self.style_mappings:
+            content = self._escape_latex_chars(text)
+            return self.style_mappings[style_name].format(content=content)
+        
+        # Handle lists
+        if self._is_list_item(text):
+            return self._convert_list_item(text)
+        
+        # Regular paragraph
+        content = self._process_runs(paragraph.runs)
+        return content if content.strip() else ''
+    
+    def _process_runs(self, runs):
+        """Process runs within a paragraph for formatting"""
+        content_parts = []
+        
+        for run in runs:
+            text = run.text
+            if not text:
+                continue
+            
+            # Escape LaTeX special characters
+            escaped_text = self._escape_latex_chars(text)
+            
+            # Apply formatting
+            formatted_text = self._apply_run_formatting(escaped_text, run)
+            content_parts.append(formatted_text)
+        
+        return ''.join(content_parts)
+    
+    def _apply_run_formatting(self, text, run):
+        """Apply formatting to text based on run properties"""
+        if not text.strip():
+            return text
+        
+        formatted = text
+        
+        # Bold
+        if run.bold:
+            formatted = f'\\textbf{{{formatted}}}'
+        
+        # Italic
+        if run.italic:
+            formatted = f'\\textit{{{formatted}}}'
+        
+        # Underline
+        if run.underline:
+            formatted = f'\\underline{{{formatted}}}'
+        
+        # Font size changes (approximate)
+        if run.font.size:
+            size_pt = run.font.size.pt
+            if size_pt > 14:
+                formatted = f'\\Large {{{formatted}}}'
+            elif size_pt > 12:
+                formatted = f'\\large {{{formatted}}}'
+            elif size_pt < 10:
+                formatted = f'\\small {{{formatted}}}'
+        
+        return formatted
+    
+    def _is_list_item(self, text):
+        """Check if text appears to be a list item"""
+        return bool(re.match(r'^[•\-\*]\s+|^\d+[\.)]\s+', text))
+    
+    def _convert_list_item(self, text):
+        """Convert list item to LaTeX format"""
+        # Remove list markers
+        cleaned_text = re.sub(r'^[•\-\*]\s+|^\d+[\.)]\s+', '', text)
+        escaped_text = self._escape_latex_chars(cleaned_text)
+        
+        # Determine list type
+        if re.match(r'^\d+[\.)]\s+', text):
+            # Numbered list
+            return f'\\begin{{enumerate}}\\item {escaped_text}\\end{{enumerate}}'
+        else:
+            # Bulleted list
+            return f'\\begin{{itemize}}\\item {escaped_text}\\end{{itemize}}'
+    
+    def _process_tables(self, tables):
+        """Process tables and convert to LaTeX"""
+        for table in tables:
+            latex_table = self._convert_table(table)
+            if latex_table:
+                self.latex_content.extend(latex_table)
+                self.latex_content.append('')
+    
+    def _convert_table(self, table):
+        """Convert a Word table to LaTeX format"""
+        if not table.rows:
+            return []
+        
+        # Determine number of columns
+        max_cols = max(len(row.cells) for row in table.rows)
+        
+        # Start table
+        latex_lines = [
+            '\\begin{table}[h]',
+            '\\centering',
+            f'\\begin{{tabular}}{{{"l" * max_cols}}}',
+            '\\toprule'
+        ]
+        
+        # Process rows
+        for i, row in enumerate(table.rows):
+            row_content = []
+            for cell in row.cells[:max_cols]:
+                cell_text = self._escape_latex_chars(cell.text.strip())
+                row_content.append(cell_text)
+            
+            # Pad row if necessary
+            while len(row_content) < max_cols:
+                row_content.append('')
+            
+            latex_lines.append(' & '.join(row_content) + ' \\\\')
+            
+            # Add midrule after first row (header)
+            if i == 0:
+                latex_lines.append('\\midrule')
+        
+        # End table
+        latex_lines.extend([
+            '\\bottomrule',
+            '\\end{tabular}',
+            '\\end{table}'
+        ])
+        
+        return latex_lines
+    
+    def _escape_latex_chars(self, text):
+        """Escape special LaTeX characters"""
+        # Dictionary of characters to escape
+        escape_chars = {
+            '\\': r'\textbackslash{}',
+            '{': r'\{',
+            '}': r'\}',
+            '$': r'\$',
+            '&': r'\&',
+            '%': r'\%',
+            '#': r'\#',
+            '^': r'\textasciicircum{}',
+            '_': r'\_',
+            '~': r'\textasciitilde{}',
+        }
+        
+        for char, escaped in escape_chars.items():
+            text = text.replace(char, escaped)
+        
+        return text
+    
+    def _finalize_latex_document(self):
+        """Finalize LaTeX document"""
+        self.latex_content.extend([
+            '',
+            '\\end{document}'
+        ])
 
 class DocumentFormatter:
     # Pre-compiled regex patterns for better performance
@@ -313,6 +568,11 @@ class DocumentFormatter:
             logger.info(f"Completed: {output_path}")
         
         return output_path
+    
+    def convert_to_latex(self, docx_path):
+        """Convert Word document to LaTeX format"""
+        converter = LaTeXConverter(debug=self.debug)
+        return converter.convert_document(docx_path)
     
     def __del__(self):
         """Clean up cache when object is destroyed"""
